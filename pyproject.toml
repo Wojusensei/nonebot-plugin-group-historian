@@ -1,7 +1,7 @@
 [project]
-name = "nonebot-plugin-anti-recall-ltd"
+name = "nonebot-plugin-group-historian"
 version = "0.1.0"
-description = "A NoneBot2 plugin to log recalled messages in QQ groups"
+description = "统计每日群聊发言字数 生成话痨榜图片的NoneBot2插件"
 authors = [{name = "Wojusensei", email = "3442006415@qq.com"}]
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["nonebot_plugin_anti_recall"]
+packages = ["nonebot_plugin_group_historian"]
 
 [build-system]
 requires = ["setuptools>=64.0", "wheel"]
