@@ -1,168 +1,199 @@
 import asyncio
-from datetime import datetime, timedelta
-from nonebot import on_command, on_message, on_notice, require, get_plugin_config, get_driver
-from nonebot.adapters.onebot.v11 import (
-    Bot,
-    GroupMessageEvent,
-    GroupRecallNoticeEvent,
-    MessageSegment,
-)
+import sqlite3
+import re
+from datetime import date, timedelta
+from pathlib import Path
+from typing import List, Tuple
+
+from nonebot import on_command, on_message, require, get_plugin_config, get_driver
+from nonebot.adapters.onebot.v11 import Bot, Event, GroupMessageEvent, MessageSegment
 from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
 
+from .config import Config
 
-# ————————————————————————————
-# 依赖声明
-# ————————————————————————————
-
-require("nonebot_plugin_orm")
-require("nonebot_plugin_apscheduler")
+# ========================
+# localstore 
+# ========================
 require("nonebot_plugin_localstore")
+import nonebot_plugin_localstore as store
 
+DATA_DIR = store.get_plugin_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "historian.db"
 
-# ————————————————————————————
-# 元数据 插件身份证
-# ————————————————————————————
-
+# ========================
+# 插件元数据
+# ========================
 __plugin_meta__ = PluginMetadata(
     name="群聊史官",
-    description="统计每日群聊发言字数 生成话痨榜图片",
-    usage="在群里发送 话痨榜 查看昨日排行\n发送 今日话痨榜 查看今日实时排行\n可加页码 例如 话痨榜 2",
+    description="统计群成员每日发言字数，生成话痨榜图片",
+    usage="发送「今日话痨榜」获取排行榜图片",
     type="application",
     homepage="https://github.com/Wojusensei/nonebot-plugin-group-historian",
-    config=None,
+    config=Config,
     supported_adapters={"~onebot.v11"},
 )
 
-
-# ————————————————————————————
-# 导入插件内部模块 放在元数据之后
-# ————————————————————————————
-
-from .config import Config
-from .data import add_message, delete_last_message, get_daily_ranking, clean_old_data
-from .image import create_ranking_image
-
-
-# ————————————————————————————
-# 加载配置 使用 get_plugin_config
-# ————————————————————————————
-
+# ========================
+# 读取配置
+# ========================
 config = get_plugin_config(Config)
 
+# ========================
+#  数据库操作asyncio.to_thread）
+# ========================
+def init_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS daily_words (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            word_count INTEGER DEFAULT 0,
+            UNIQUE(group_id, user_id, date)
+        )
+    ''')
+    # 创建索引
+    c.execute('CREATE INDEX IF NOT EXISTS idx_date ON daily_words(date)')
+    conn.commit()
+    conn.close()
 
-# ————————————————————————————
-# 消息缓存 用于撤回时扣除字数
-# key 是消息ID value 是 (群号, QQ号, 字数)
-# ————————————————————————————
+async def async_init_db():
+    await asyncio.to_thread(init_db)
 
-message_cache = {}
+async def add_words(group_id: int, user_id: int, date_str: str, count: int):
+    def _add():
+        conn = sqlite3.connect(str(DB_PATH))
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO daily_words (group_id, user_id, date, word_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, user_id, date)
+            DO UPDATE SET word_count = word_count + excluded.word_count
+        ''', (group_id, user_id, date_str, count))
+        conn.commit()
+        conn.close()
+    await asyncio.to_thread(_add)
 
+async def get_today_ranking(group_id: int, date_str: str, limit: int) -> List[Tuple[int, int]]:
+    def _get():
+        conn = sqlite3.connect(str(DB_PATH))
+        c = conn.cursor()
+        c.execute('''
+            SELECT user_id, word_count FROM daily_words
+            WHERE group_id = ? AND date = ?
+            ORDER BY word_count DESC
+            LIMIT ?
+        ''', (group_id, date_str, limit))
+        rows = c.fetchall()
+        conn.close()
+        return rows
+    return await asyncio.to_thread(_get)
 
-# ————————————————————————————
-# 监听群消息 记录字数
-# ————————————————————————————
+async def clean_old_data(days: int):
+    """清理超过指定天数的数据"""
+    def _clean():
+        conn = sqlite3.connect(str(DB_PATH))
+        c = conn.cursor()
+        cutoff_date = (date.today() - timedelta(days=days)).isoformat()
+        c.execute('DELETE FROM daily_words WHERE date < ?', (cutoff_date,))
+        conn.commit()
+        conn.close()
+    await asyncio.to_thread(_clean)
 
-msg_handler = on_message(block=False)
+# ========================
+# 消息文本提取与字数统计
+# ========================
+async def get_message_text(event: GroupMessageEvent) -> str:
+    text = ""
+    for seg in event.get_message():
+        if seg.type == "text":
+            text += str(seg)
+    return text
 
+async def count_words(text: str) -> int:
+    # 统计中文字符、字母、数字（可根据需要调整）
+    return len(re.findall(r'[\u4e00-\u9fa5a-zA-Z0-9]', text))
 
-@msg_handler.handle()
-async def handle_message(event: GroupMessageEvent):
-    text = event.get_plaintext()
+# ========================
+#  图片生成
+# ========================
+async def generate_ranking_image(ranking: List[Tuple[int, int]], group_id: int, limit: int) -> Path:
+    from PIL import Image, ImageDraw, ImageFont
+    import os
 
-    # 过滤纯图片表情等无文字消息
-    if not text or not text.strip():
-        return
+    width, height = 600, 100 + len(ranking) * 40
+    img = Image.new('RGB', (width, height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
 
-    length = len(text.replace(" ", ""))
-    group_id = str(event.group_id)
-    user_id = str(event.user_id)
-    nickname = event.sender.card or event.sender.nickname or user_id
+    try:
+        if os.name == 'nt':
+            font = ImageFont.truetype("simhei.ttf", 20)
+        else:
+            font = ImageFont.load_default()
+    except:
+        font = ImageFont.load_default()
 
-    await add_message(group_id, user_id, nickname, length)
+    y = 10
+    draw.text((10, y), f"群 {group_id} 今日话痨榜（TOP{limit}）", fill=(0, 0, 0), font=font)
+    y += 30
+    for idx, (user_id, words) in enumerate(ranking, 1):
+        draw.text((10, y), f"{idx}. QQ: {user_id}  {words} 字", fill=(0, 0, 0), font=font)
+        y += 35
 
-    # 存入缓存 供撤回时扣除
-    message_cache[str(event.message_id)] = (group_id, user_id, length)
+    img_path = DATA_DIR / f"ranking_{group_id}_{date.today()}.png"
+    img.save(img_path)
+    return img_path
 
+# ========================
+# 命令注册
+# ========================
+historian_cmd = on_command("今日话痨榜", aliases={"话痨榜"}, priority=10, block=True)
 
-# ————————————————————————————
-# 监听群撤回 扣除字数
-# ————————————————————————————
-
-recall_handler = on_notice(block=False)
-
-
-@recall_handler.handle()
-async def handle_recall(event: GroupRecallNoticeEvent):
-    msg_id = str(event.message_id)
-    if msg_id in message_cache:
-        group_id, user_id, length = message_cache[msg_id]
-        await delete_last_message(group_id, user_id, length)
-        del message_cache[msg_id]
-
-
-# ————————————————————————————
-# 话痨榜命令
-# 默认查昨日 加今日查今天
-# ————————————————————————————
-
-rank_cmd = on_command("话痨榜", aliases={"今日话痨榜"}, block=True)
-
-
-@rank_cmd.handle()
-async def handle_rank(event: GroupMessageEvent, bot: Bot):
-    raw = event.get_plaintext().strip()
-    parts = raw.split()
-
-    # 判断查今天还是昨天
-    is_today = "今日" in raw
-
-    # 解析页码
-    page = 1
-    for p in parts:
-        if p.isdigit():
-            page = int(p)
-            if page < 1:
-                page = 1
-            break
-
-    # 确定日期
-    date = datetime.now().date() if is_today else (datetime.now().date() - timedelta(days=1))
-
-    # 获取排行榜
-    ranking = await get_daily_ranking(str(event.group_id), date)
-
+@historian_cmd.handle()
+async def handle_historian(event: GroupMessageEvent):
+    group_id = event.group_id
+    today_str = date.today().isoformat()
+    limit = config.historian_rank_count  # 使用配置的显示人数
+    ranking = await get_today_ranking(group_id, today_str, limit)
     if not ranking:
-        day_text = "今天" if is_today else "昨天"
-        await rank_cmd.finish(f"{day_text}还没有人说话呢", at_sender=True)
+        await historian_cmd.finish("今天还没有人发言哦～")
+    img_path = await generate_ranking_image(ranking, group_id, limit)
+    await historian_cmd.send(MessageSegment.image(img_path))
+    await historian_cmd.finish("以上是今日话痨榜")
+
+# ========================
+# 消息监听器
+# ========================
+msg_recorder = on_message(priority=5, block=False)
+
+@msg_recorder.handle()
+async def record_message(bot: Bot, event: Event):
+    if not isinstance(event, GroupMessageEvent):
         return
+    raw = event.get_plaintext().strip()
+    # 排除命令本身
+    if raw.startswith(("今日话痨榜", "话痨榜")):
+        return
+    text = await get_message_text(event)
+    if not text:
+        return
+    cnt = await count_words(text)
+    if cnt == 0:
+        return
+    await add_words(event.group_id, event.user_id, date.today().isoformat(), cnt)
 
-    # 生成图片 放入线程池避免阻塞事件循环
-    rank_count = config.historian_rank_count
-    img_bytes = await asyncio.to_thread(
-        create_ranking_image,
-        ranking,
-        page=page,
-        rank_count=rank_count,
-    )
-
-    await rank_cmd.send(MessageSegment.image(img_bytes))
-
-
-# ————————————————————————————
-# 定时任务 每日凌晨清理旧数据
-# ————————————————————————————
-
-from nonebot_plugin_apscheduler import scheduler
-
-
-@scheduler.scheduled_job("cron", hour=0, minute=0, id="clean_old_historian_data")
-async def scheduled_clean():
-    await clean_old_data(config.historian_data_retention_days)
-
-
-# ————————————————————————————
-# 启动日志
-# ————————————————————————————
-
-logger.info("群聊史官 插件已加载")
+# ========================
+# 启动时初始化数据库，清理旧数据
+# ========================
+driver = get_driver()
+@driver.on_startup
+async def startup():
+    await async_init_db()
+    # 清理超过保留天数的数据
+    retention_days = config.historian_data_retention_days
+    await clean_old_data(retention_days)
+    logger.info(f"群聊史官数据库初始化完成，数据保留 {retention_days} 天")
