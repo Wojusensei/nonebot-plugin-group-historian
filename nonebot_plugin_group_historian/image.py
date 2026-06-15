@@ -2,9 +2,7 @@ import io
 from PIL import Image, ImageDraw, ImageFont
 from nonebot.log import logger
 from nonebot_plugin_localstore import get_plugin_data_dir
-from nonebot import require
 
-require("nonebot_plugin_localstore")
 
 
 # ————————————————————————————
