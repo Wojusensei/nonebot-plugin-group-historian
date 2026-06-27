@@ -1,24 +1,29 @@
 from datetime import datetime, timedelta
 from sqlalchemy import Column, Integer, String, Date, func
-from nonebot_plugin_orm import Model
 from nonebot import require
 
+# 声明依赖
 require("nonebot_plugin_orm")
 
 
-class DailyMessage(Model):
-    __tablename__ = "daily_messages"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    group_id = Column(String, nullable=False)
-    user_id = Column(String, nullable=False)
-    nickname = Column(String)
-    message_length = Column(Integer, default=0)
-    timestamp = Column(Date, nullable=False)
+def _get_model():
+    """延迟导入 Model，避免模块加载时触发 get_plugin_data_dir"""
+    from nonebot_plugin_orm import Model
+    return Model
 
 
 async def add_message(group_id: str, user_id: str, nickname: str, length: int):
     from nonebot_plugin_orm import get_scoped_session
+
+    class DailyMessage(_get_model()):
+        __tablename__ = "daily_messages"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        group_id = Column(String, nullable=False)
+        user_id = Column(String, nullable=False)
+        nickname = Column(String)
+        message_length = Column(Integer, default=0)
+        timestamp = Column(Date, nullable=False)
 
     async with get_scoped_session() as session:
         record = DailyMessage(
@@ -34,6 +39,15 @@ async def add_message(group_id: str, user_id: str, nickname: str, length: int):
 
 async def delete_last_message(group_id: str, user_id: str, length: int):
     from nonebot_plugin_orm import get_scoped_session
+
+    class DailyMessage(_get_model()):
+        __tablename__ = "daily_messages"
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        group_id = Column(String, nullable=False)
+        user_id = Column(String, nullable=False)
+        nickname = Column(String)
+        message_length = Column(Integer, default=0)
+        timestamp = Column(Date, nullable=False)
 
     today = datetime.now().date()
     async with get_scoped_session() as session:
@@ -59,6 +73,15 @@ async def delete_last_message(group_id: str, user_id: str, length: int):
 async def get_daily_ranking(group_id: str, date=None) -> list:
     from nonebot_plugin_orm import get_scoped_session
 
+    class DailyMessage(_get_model()):
+        __tablename__ = "daily_messages"
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        group_id = Column(String, nullable=False)
+        user_id = Column(String, nullable=False)
+        nickname = Column(String)
+        message_length = Column(Integer, default=0)
+        timestamp = Column(Date, nullable=False)
+
     if date is None:
         date = datetime.now().date()
 
@@ -83,6 +106,15 @@ async def get_daily_ranking(group_id: str, date=None) -> list:
 
 async def clean_old_data(retention_days: int):
     from nonebot_plugin_orm import get_scoped_session
+
+    class DailyMessage(_get_model()):
+        __tablename__ = "daily_messages"
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        group_id = Column(String, nullable=False)
+        user_id = Column(String, nullable=False)
+        nickname = Column(String)
+        message_length = Column(Integer, default=0)
+        timestamp = Column(Date, nullable=False)
 
     cutoff = datetime.now().date() - timedelta(days=retention_days)
     async with get_scoped_session() as session:
