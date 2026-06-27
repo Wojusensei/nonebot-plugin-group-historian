@@ -6,10 +6,6 @@ from nonebot import require
 require("nonebot_plugin_orm")
 
 
-# ————————————————————————————
-# 每日发言记录表
-# ————————————————————————————
-
 class DailyMessage(Model):
     __tablename__ = "daily_messages"
 
@@ -20,10 +16,6 @@ class DailyMessage(Model):
     message_length = Column(Integer, default=0)
     timestamp = Column(Date, nullable=False)
 
-
-# ————————————————————————————
-# 记录
-# ————————————————————————————
 
 async def add_message(group_id: str, user_id: str, nickname: str, length: int):
     from nonebot_plugin_orm import get_scoped_session
@@ -39,10 +31,6 @@ async def add_message(group_id: str, user_id: str, nickname: str, length: int):
         session.add(record)
         await session.commit()
 
-
-# ————————————————————————————
-# 撤回消息时扣除最近一条匹配的字数
-# ————————————————————————————
 
 async def delete_last_message(group_id: str, user_id: str, length: int):
     from nonebot_plugin_orm import get_scoped_session
@@ -68,11 +56,6 @@ async def delete_last_message(group_id: str, user_id: str, length: int):
             await session.commit()
 
 
-# ————————————————————————————
-# 获取指定日期的字数排行榜
-# 返回 [(user_id, nickname, total), ...]
-# ————————————————————————————
-
 async def get_daily_ranking(group_id: str, date=None) -> list:
     from nonebot_plugin_orm import get_scoped_session
 
@@ -97,10 +80,6 @@ async def get_daily_ranking(group_id: str, date=None) -> list:
         rows = result.fetchall()
         return [(row.user_id, row.nickname, row.total) for row in rows]
 
-
-# ————————————————————————————
-# 删除超过保留天数的旧数据
-# ————————————————————————————
 
 async def clean_old_data(retention_days: int):
     from nonebot_plugin_orm import get_scoped_session

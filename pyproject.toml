@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-plugin-group-historian"
-version = "0.1.6"
+version = "0.1.7"
 description = "作为史官，统计成员每日发言字数，生成话痨榜图片"
 authors = [{name = "Wojusensei", email = "3442006415@qq.com"}]
 readme = "README.md"
