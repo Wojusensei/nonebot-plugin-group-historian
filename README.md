@@ -37,7 +37,7 @@ pip install nonebot-plugin-group-historian
 - 仅统计文字消息，图片、表情、文件等不计算
 - 排行榜每日 0 点自动重置
 - 需要机器人有发送图片的权限
-- 少维护，可能有bug
+- 少维护，可能有bug喔
 
 ## 开源协议
 
