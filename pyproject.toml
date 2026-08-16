@@ -4,25 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-plugin-group-historian"
-version = "0.1.8"
+version = "0.2.0"
 description = "作为史官，统计成员每日发言字数，生成话痨榜图片"
 authors = [{name = "Wojusensei", email = "3442006415@qq.com"}]
 readme = "README.md"
 license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
 ]
 dependencies = [
     "nonebot2>=2.3.0",
     "nonebot-adapter-onebot>=2.0.0",
     "nonebot-plugin-localstore>=0.5.0",
-    "nonebot-plugin-orm>=0.4.0",
+    "nonebot-plugin-orm>=0.7.0",
+    "aiosqlite>=0.19.0",
     "Pillow>=9.0.0",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio",
+    "nonebug>=0.4.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/Wojusensei/nonebot-plugin-group-historian"
 
 [tool.setuptools]
 packages = ["nonebot_plugin_group_historian"]
+
+[tool.setuptools.package-data]
+nonebot_plugin_group_historian = ["migrations/**/*.py"]
